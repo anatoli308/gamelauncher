@@ -1,431 +1,237 @@
-# Copilot Instructions - Game Launcher
+# Copilot Instructions - RemakeSoF Game Launcher
 
 ## Project Overview
 
-This is a cross-platform game launcher built with:
-- **Frontend**: React + TypeScript + Vite + Tailwind CSS
-- **Backend**: Rust + Tauri
-- **Architecture**: Event-driven with IPC communication between frontend and backend
+A cross-platform game launcher for RemakeSoF (Soldier of Fortune 2 Remake) built with:
+- **Frontend**: React 18 + TypeScript + Vite + Tailwind CSS + Zustand
+- **Backend**: Rust + Tauri (desktop shell)
+- **External API**: FastAPI server at `http://localhost:8000` (not included in this repo)
+- **Architecture**: Service-oriented with clear separation between UI, business logic, and IPC layer
 
-## SOLID Principles
+**Key Architectural Principle**: Frontend services call Tauri commands (IPC), which delegate to Rust services that handle HTTP communication with external FastAPI backend.
 
-### Single Responsibility Principle (SRP)
-- Each service, component, and module must have **one** clear responsibility
-- Separate concerns: UI rendering, business logic, data management, external communication
-- React components should focus on presentation; logic belongs in services
-- Rust commands should delegate to specialized services
+## Critical Developer Workflows
 
-**Example (Good):**
-```typescript
-// authService.ts - handles ONLY authentication logic
-// gameService.ts - handles ONLY game management
-// settingsService.ts - handles ONLY settings persistence
+### Development Commands
+```bash
+# Start Tauri in dev mode (launches both Vite dev server and Rust app)
+npm run tauri:dev
+
+# Frontend only (for UI work without Tauri)
+npm run dev
+
+# Build for production
+npm run tauri:build
 ```
 
-### Open/Closed Principle (OCP)
-- Use composition and dependency injection over modification
-- Extend behavior through interfaces and abstract classes
-- Use strategy pattern for interchangeable behaviors
-- Tauri commands should be thin wrappers around extensible services
+**Important**: The external FastAPI backend must be running at `http://localhost:8000` for authentication and game management features to work. The Tauri app communicates with this external service.
 
-**Example (Good):**
+### Project-Specific Conventions
+
+#### State Management Pattern
+- **Zustand** is the single source of truth: [src/services/store.ts](src/services/store.ts)
+- Store contains both state AND actions (no separate action files)
+- Services are called from store actions, not directly from components
+- Components use `useLauncherStore()` hook to access state/actions
+
+**Example Pattern**:
 ```typescript
-interface DownloadStrategy {
-  download(url: string, destination: string): Promise<void>;
-}
+// ✅ Correct: Component calls store action
+const { login } = useLauncherStore();
+await login(username, password);
 
-class HttpDownloader implements DownloadStrategy { ... }
-class TorrentDownloader implements DownloadStrategy { ... }
+// ❌ Wrong: Component calls service directly
+await AuthService.login(username, password);
 ```
 
-### Liskov Substitution Principle (LSP)
-- Derived classes must be substitutable for their base classes
-- Don't strengthen preconditions or weaken postconditions
-- Maintain contracts defined by abstractions
+#### IPC Communication Flow
+**Frontend → Tauri → External API**:
+1. Frontend service (e.g., [authService.ts](src/services/authService.ts)) currently calls FastAPI directly via `fetch()`
+2. Tauri commands (e.g., [auth.rs](src-tauri/src/commands/auth.rs)) are thin wrappers around Rust services
+3. Rust services (e.g., [auth_service.rs](src-tauri/src/services/auth_service.rs)) make HTTP requests to FastAPI backend
 
-### Interface Segregation Principle (ISP)
-- Create focused, specific interfaces
-- Clients shouldn't depend on methods they don't use
-- Prefer multiple small interfaces over one large interface
+**Note**: There's architectural inconsistency - frontend services bypass Tauri for HTTP calls. For new features, use Tauri commands (`invoke('command_name')`) rather than direct `fetch()` calls to maintain proper IPC boundaries.
 
-**Example (Good):**
-```typescript
-interface Authenticatable {
-  login(credentials: Credentials): Promise<User>;
-  logout(): Promise<void>;
-}
-
-interface TokenRefreshable {
-  refreshToken(): Promise<Token>;
-}
-```
-
-### Dependency Inversion Principle (DIP)
-- Depend on abstractions (interfaces/traits), not concrete implementations
-- High-level modules should not depend on low-level modules
-- Both should depend on abstractions
-
-**Example (Good):**
+#### Tauri Commands Registration
+All commands MUST be registered in [src-tauri/src/main.rs](src-tauri/src/main.rs):
 ```rust
-trait FileStorage {
-    fn save(&self, path: &Path, data: &[u8]) -> Result<()>;
-    fn load(&self, path: &Path) -> Result<Vec<u8>>;
-}
-
-struct LocalFileStorage;
-impl FileStorage for LocalFileStorage { ... }
+.invoke_handler(tauri::generate_handler![
+    auth::login,
+    auth::logout,
+    game::check_version,
+    // Add new commands here
+])
 ```
 
-## Core Coding Standards
-
-### Small, Focused Functions
-- **Maximum 20 lines** per function (aim for less)
-- One level of abstraction per function
-- If you need to comment sections within a function, extract those sections
-- Extract nested logic into well-named helper functions
-
-**Bad:**
-```typescript
-function processGameData(game: Game) {
-  // Validate game
-  if (!game.id || !game.name) throw new Error("Invalid game");
-  
-  // Download game files
-  const url = getDownloadUrl(game.id);
-  const response = await fetch(url);
-  const data = await response.blob();
-  
-  // Save to disk
-  await invoke('save_file', { path: game.installPath, data });
-  
-  // Update database
-  await db.games.update(game.id, { installed: true });
-}
-```
-
-**Good:**
-```typescript
-async function processGameData(game: Game): Promise<void> {
-  validateGame(game);
-  const data = await downloadGameFiles(game.id);
-  await saveGameToDisk(game.installPath, data);
-  await markGameAsInstalled(game.id);
-}
-```
-
-### Pure Functions & No Side Effects
-- Functions should return values, not mutate external state
-- Make side effects explicit in function names (`save`, `update`, `fetch`)
-- Separate pure logic from I/O operations
-- Use immutable data structures where possible
-
-**Good:**
-```typescript
-// Pure function
-function calculateDownloadProgress(downloaded: number, total: number): number {
-  return (downloaded / total) * 100;
-}
-
-// Side effect is explicit in name
-async function updateDownloadProgress(gameId: string, progress: number): Promise<void> {
-  await invoke('update_progress', { gameId, progress });
-}
-```
-
-### DRY (Don't Repeat Yourself)
-- Extract repeated logic into reusable functions
-- Use utility functions for common operations
-- Create shared types and interfaces
-- Avoid copy-paste programming
-
-### Clear, Self-Documenting Code
-- Use descriptive variable and function names
-- Avoid abbreviations unless universally understood (`id`, `url`, `http`)
-- Boolean variables should read like questions: `isLoading`, `hasError`, `canDownload`
-- Function names should be verbs: `fetchGames`, `validateInput`, `calculateTotal`
-
-**Bad:**
-```typescript
-const d = new Date();
-const usr = await getUsr();
-const res = await proc(usr);
-```
-
-**Good:**
-```typescript
-const currentDate = new Date();
-const currentUser = await getCurrentUser();
-const validationResult = await validateUser(currentUser);
-```
-
-### Separation of Concerns
-
-#### React Components (Presentation Layer)
-- Focus on UI rendering and user interaction
-- Delegate business logic to services
-- Keep components under 200 lines
-- Use custom hooks for complex state logic
-
-```typescript
-// ❌ Bad: Business logic in component
-function GameCard({ game }) {
-  const install = () => {
-    fetch(`/api/games/${game.id}/download`)
-      .then(res => res.blob())
-      .then(data => invoke('save_file', { data }));
-  };
-  return <button onClick={install}>Install</button>;
-}
-
-// ✅ Good: Delegate to service
-function GameCard({ game }) {
-  const { installGame } = useGameService();
-  return <button onClick={() => installGame(game.id)}>Install</button>;
-}
-```
-
-#### Services (Business Logic Layer)
-- Encapsulate business rules and workflows
-- Handle state management
-- Coordinate between UI and backend
-- One service per domain concept
-
-#### Tauri Commands (IPC Layer)
-- Thin wrappers around Rust services
-- Handle serialization/deserialization
-- Map errors to appropriate types
-- No business logic in commands
-
+#### Event-Driven Progress Updates
+For long-running operations (downloads), Rust emits events to frontend:
 ```rust
-// ❌ Bad: Business logic in command
-#[tauri::command]
-async fn download_game(url: String) -> Result<(), String> {
-    let response = reqwest::get(&url).await.unwrap();
-    let bytes = response.bytes().await.unwrap();
-    std::fs::write("game.zip", bytes).unwrap();
-    Ok(())
-}
+// Rust side (in command)
+let _ = window.emit("download-progress", progress);
 
-// ✅ Good: Delegate to service
-#[tauri::command]
-async fn download_game(game_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    state.game_service
-        .download_game(&game_id)
-        .await
-        .map_err(|e| e.to_string())
-}
+// Frontend listens via Tauri API
+import { listen } from '@tauri-apps/api/event';
+listen('download-progress', (event) => { /* handle */ });
 ```
 
-### Error Handling
+### Type Definitions
+
+**Shared Types**: Types are duplicated across TypeScript ([src/types/index.ts](src/types/index.ts)) and Rust ([src-tauri/src/types.rs](src-tauri/src/types.rs)). When adding new types:
+1. Define in TypeScript first
+2. Mirror in Rust with `#[derive(Serialize, Deserialize)]`
+3. Ensure field names match exactly (camelCase in TS → snake_case in Rust via serde)
+
+**LauncherStatus Enum**: Used as state machine for UI rendering:
+```typescript
+IDLE → CHECKING_VERSION → DOWNLOADING → INSTALLING → READY → PLAYING
+                                ↓
+                              ERROR
+```
+
+### Error Handling Patterns
 
 #### TypeScript
-- Use `try/catch` for async operations
-- Create custom error types for different error categories
-- Never silently swallow errors
-- Provide meaningful error messages to users
-
-```typescript
-class GameInstallError extends Error {
-  constructor(
-    message: string,
-    public readonly gameId: string,
-    public readonly cause?: Error
-  ) {
-    super(message);
-    this.name = 'GameInstallError';
-  }
-}
-
-async function installGame(gameId: string): Promise<void> {
-  try {
-    await downloadGameFiles(gameId);
-    await extractGameArchive(gameId);
-    await updateGameRegistry(gameId);
-  } catch (error) {
-    throw new GameInstallError(
-      `Failed to install game ${gameId}`,
-      gameId,
-      error as Error
-    );
-  }
-}
-```
+- Services throw errors, store catches them and sets `errorMessage` state
+- Never silent catch - always update UI state or log
+- Format: `throw new Error(\`Descriptive message: ${error}\`)`
 
 #### Rust
-- Use `Result<T, E>` for operations that can fail
-- Create custom error types with `thiserror`
-- Propagate errors with `?` operator
-- Log errors before returning to frontend
-
+- Commands return `Result<T, String>` (String errors for frontend)
+- Services use `Box<dyn Error>` for internal error propagation
+- Map all errors to user-friendly strings before returning to frontend:
 ```rust
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub enum GameError {
-    #[error("Game not found: {0}")]
-    NotFound(String),
-    
-    #[error("Download failed: {0}")]
-    DownloadError(#[from] reqwest::Error),
-    
-    #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
-}
-
-pub async fn download_game(game_id: &str) -> Result<PathBuf, GameError> {
-    let game = find_game(game_id)?;
-    let bytes = fetch_game_data(&game.url).await?;
-    let path = save_game_files(&bytes).await?;
-    Ok(path)
-}
-```
-
-### Type Safety
-
-#### TypeScript
-- Avoid `any` type (use `unknown` if necessary)
-- Define interfaces for all data structures
-- Use discriminated unions for state machines
-- Leverage TypeScript's strict mode
-
-```typescript
-// ✅ Good: Type-safe state machine
-type DownloadState = 
-  | { status: 'idle' }
-  | { status: 'downloading'; progress: number }
-  | { status: 'completed'; path: string }
-  | { status: 'error'; error: Error };
-
-function renderDownloadStatus(state: DownloadState): string {
-  switch (state.status) {
-    case 'idle': return 'Ready to download';
-    case 'downloading': return `Downloading: ${state.progress}%`;
-    case 'completed': return `Saved to ${state.path}`;
-    case 'error': return `Error: ${state.error.message}`;
-  }
-}
-```
-
-#### Rust
-- Leverage the type system for compile-time guarantees
-- Use newtypes for domain concepts
-- Prefer owned types over references in public APIs
-- Use `Option<T>` and `Result<T, E>` appropriately
-
-```rust
-// ✅ Good: Newtype for type safety
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct GameId(String);
-
-impl GameId {
-    pub fn new(id: String) -> Result<Self, String> {
-        if id.is_empty() {
-            return Err("GameId cannot be empty".to_string());
-        }
-        Ok(GameId(id))
+#[tauri::command]
+pub async fn my_command() -> Result<Data, String> {
+    match MyService::do_work().await {
+        Ok(data) => Ok(data),
+        Err(e) => Err(format!("User-friendly message: {}", e)),
     }
 }
 ```
 
-### Testing Considerations
-- Write testable code (avoid global state)
-- Inject dependencies for mocking
-- Keep I/O at the boundaries
-- One assertion per test (mostly)
+### File System Conventions
 
-### Code Organization
+#### Install Path Resolution
+- Default: `%LOCALAPPDATA%\RemakeSoF\Game` (Windows)
+- Get via: `GameService::get_install_path()` (Rust) or [settingsService.ts](src/services/settingsService.ts)
+- Token storage: `%LOCALAPPDATA%\RemakeSoF\.token` (insecure - TODO: use OS keychain)
 
+#### Tauri Permissions
+[tauri.conf.json](src-tauri/tauri.conf.json) defines security allowlist:
+- HTTP: `http://localhost:8000/**` (FastAPI backend)
+- FS: `$APPDATA/*` scope only
+- Shell: `open` command only
+
+**Adding New Permissions**: Update `allowlist` section in tauri.conf.json before using new APIs.
+
+### Testing & Debugging
+
+**No Tests Yet**: Project lacks test coverage. When adding tests:
+- Frontend: Vitest + React Testing Library
+- Rust: `#[cfg(test)]` modules + `cargo test`
+
+**Debugging Tauri**:
+- Rust logs: `println!()` appears in terminal running `npm run tauri:dev`
+- Frontend logs: Open DevTools in Tauri window (right-click → Inspect)
+- Network: Check Rust HTTP calls, not browser DevTools
+
+### Common Gotchas
+
+1. **Hardcoded API URL**: `http://localhost:8000` is hardcoded in multiple places. For production, extract to environment config.
+2. **Incomplete Features**: `downloadGame()` lacks real progress tracking (marked with TODO comments)
+3. **Token Storage**: Currently plaintext file. Production needs OS keychain integration (keyring crate).
+4. **No Auto-Update**: Launcher doesn't self-update yet.
+5. **Mixed HTTP Approaches**: Frontend sometimes uses `fetch()` directly, sometimes Tauri commands. Prefer Tauri commands for consistency.
+
+
+## Code Quality Principles
+
+### Function Design
+- **Keep functions small**: Maximum 20 lines, one responsibility
+- **Pure when possible**: Return values, don't mutate state
+- **Explicit side effects**: Name functions clearly (`saveSettings`, `fetchData`)
+- **DRY**: Extract repeated patterns into utilities
+
+### Naming & Clarity
+- **Descriptive names**: `currentUser` not `usr`, `isLoading` not `loading`
+- **Boolean questions**: `isAuthenticated`, `hasError`, `canDownload`
+- **Verb functions**: `fetchGames()`, `validateInput()`, `calculateProgress()`
+
+### Architecture Patterns
+- **Single Responsibility**: One service per domain ([authService.ts](src/services/authService.ts), [gameService.ts](src/services/gameService.ts))
+- **Components**: UI rendering only, delegate to store actions
+- **Services**: Business logic and external communication
+- **Commands**: Thin Tauri wrappers with no business logic
+
+**Example**:
+```typescript
+// ✅ Component delegates to store
+const { login } = useLauncherStore();
+await login(username, password);
+
+// ❌ Don't call services directly
+await AuthService.login(username, password);
 ```
-src/
-├── components/          # React UI components
-│   ├── [Feature]Screen.tsx
-│   └── common/         # Reusable UI components
-├── services/           # Business logic layer
-│   ├── authService.ts
-│   ├── gameService.ts
-│   └── store.ts        # State management
-├── hooks/              # Custom React hooks
-├── utils/              # Pure utility functions
-├── types/              # TypeScript type definitions
-└── constants/          # Application constants
 
-src-tauri/src/
-├── commands/           # Tauri IPC commands (thin wrappers)
-├── services/           # Rust business logic
-├── models/             # Domain models
-├── errors.rs           # Custom error types
-└── main.rs             # App initialization
-```
+### Type Safety
+- **TypeScript**: No `any`, use discriminated unions for state machines
+- **Rust**: `Result<T, E>` for errors, newtypes for domain concepts
+- **Shared types**: Keep [types/index.ts](src/types/index.ts) and [types.rs](src-tauri/src/types.rs) in sync
 
-### Performance Guidelines
-- Memoize expensive computations (`useMemo`, `useCallback`)
-- Avoid unnecessary re-renders
-- Lazy load large components
-- Use pagination for large datasets
-- Stream large file downloads
-- Use async/await for I/O operations
+### Error Handling
+- **TypeScript**: Throw descriptive errors, catch in store, update `errorMessage` state
+- **Rust**: Return `Result<T, String>` from commands, use `Box<dyn Error>` in services
+- **Never**: Silent catches or generic error messages
 
-### Security Guidelines
-- Validate all user input
-- Sanitize data before display
-- Never trust frontend validation alone
-- Use secure storage for sensitive data
-- Implement proper authentication and authorization
-- Avoid exposing internal paths or sensitive info in errors
+## Naming & Organization
 
-## Naming Conventions
-
-### TypeScript
-- **Files**: `camelCase.ts` or `PascalCase.tsx` for components
-- **Components**: `PascalCase`
+### TypeScript Conventions
+- **Files**: `camelCase.ts`, `PascalCase.tsx` (components)
+- **Components/Types**: `PascalCase`
 - **Functions/Variables**: `camelCase`
 - **Constants**: `UPPER_SNAKE_CASE`
-- **Interfaces/Types**: `PascalCase`
-- **Private fields**: prefix with `_` (when not using private keyword)
 
-### Rust
-- **Files**: `snake_case.rs`
-- **Modules**: `snake_case`
-- **Structs/Enums**: `PascalCase`
+### Rust Conventions
+- **Files/Modules**: `snake_case.rs`
+- **Structs/Enums/Traits**: `PascalCase`
 - **Functions/Variables**: `snake_case`
 - **Constants**: `SCREAMING_SNAKE_CASE`
-- **Traits**: `PascalCase`
 
-## Code Review Checklist
+### Project Structure
+```
+src/
+├── components/      # UI components ([Feature]Screen.tsx)
+├── services/        # Business logic + store.ts
+├── types/           # Shared TypeScript types
+└── styles/          # CSS/Tailwind
 
-Before suggesting code, verify:
-- [ ] Does each function have a single, clear responsibility?
-- [ ] Are functions under 20 lines?
-- [ ] Are there any side effects? Are they explicit?
-- [ ] Is the code DRY? Any duplication to extract?
-- [ ] Are names self-explanatory?
-- [ ] Is error handling comprehensive?
-- [ ] Are types properly defined (no `any` in TS)?
-- [ ] Is the abstraction level consistent?
-- [ ] Does it follow the project's architecture?
-- [ ] Can this be tested easily?
+src-tauri/src/
+├── commands/        # Tauri IPC (thin wrappers)
+├── services/        # Rust business logic
+└── types.rs         # Shared Rust types
+```
 
-## Anti-Patterns to Avoid
+## Quick Checks
 
-### TypeScript/React
-- ❌ Business logic in components
-- ❌ Prop drilling (use context or state management)
-- ❌ Large useEffect hooks (split into multiple effects)
-- ❌ Inline anonymous functions in JSX (use useCallback)
-- ❌ Mutating state directly
-- ❌ Using `any` type
+Before committing code:
+- [ ] Functions < 20 lines, single responsibility
+- [ ] No `any` in TypeScript, proper error handling
+- [ ] Descriptive names, no abbreviations
+- [ ] Components delegate to store, not services directly
+- [ ] New Tauri commands registered in `main.rs`
+- [ ] Types synced between TS and Rust
+- [ ] Errors user-friendly, never silent catches
 
-### Rust
-- ❌ Unwrap/expect in library code (use `?` operator)
-- ❌ String-based errors (use custom error types)
-- ❌ Blocking operations on async runtime
-- ❌ Large functions (split into smaller ones)
-- ❌ Cloning unnecessarily (understand borrowing)
-- ❌ Public fields in structs (use getters/setters)
+## Anti-Patterns
+- ❌ Business logic in React components
+- ❌ Direct `fetch()` calls (use Tauri commands for new features)
+- ❌ `unwrap()` in Rust production code
+- ❌ Mutating state directly in Zustand
+- ❌ Generic error messages
 
-## When in Doubt
-1. **KISS**: Choose the simplest solution that works
-2. **YAGNI**: Don't add features speculatively
-3. **Refactor ruthlessly**: If code smells, improve it now
-4. **Ask "Why?"**: Understand the requirement before coding
-5. **Read existing code**: Follow established patterns in the codebase
+## Development Tips
+- **KISS**: Simple solutions over clever ones
+- **YAGNI**: Don't build speculative features
+- **Follow patterns**: Check existing code for conventions
+- **Debug**: Rust logs in terminal, frontend in DevTools
+- **API dependency**: External FastAPI at `localhost:8000` required

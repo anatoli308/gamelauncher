@@ -1,35 +1,21 @@
 # RemakeSoF Game Launcher
 
-Ein professioneller Game Launcher für RemakeSoF, gebaut mit **React**, **TypeScript** und **Vite**.
+Ein moderner, cross-platform Game Launcher für RemakeSoF (Soldier of Fortune 2 Remake), gebaut mit **Tauri**, **React**, **TypeScript** und **Rust**.
 
 ## 🎮 Features
 
-### ✅ Authentication
-- JWT-basierte Authentifizierung
-- Remember Me Funktion
-- Token Refresh
-- Sichere Token-Speicherung
+### ✅ Implementiert
+- **Authentifizierung**: JWT-basierter Login mit externer FastAPI
+- **Version Management**: Automatische Version-Checks vom Server
+- **Game Launch**: Starten des Spiels mit Token-Integration
+- **Modernes UI**: Responsive Design mit TailwindCSS
+- **Desktop App**: Native Performance durch Tauri/Rust
 
-### ✅ Game Management
-- Automatische Version-Checks
-- Download mit Progress Tracking
-- Resume Downloads
-- File Integrity Checks (SHA256)
-- Game Launch mit Token-Integration
-
-### ✅ UI/UX
-- Modernes, responsives Design (TailwindCSS)
-- Login Screen
-- Launcher Dashboard mit News
-- Download Progress mit ETA
-- Settings Management
-
-### ✅ Backend (FastAPI)
-- RESTful API
-- JWT Authentication
-- Version Management
-- File Serving
-- Player Profile Management
+### 🚧 In Entwicklung
+- **Download Manager**: Progress Tracking und Resume-Funktionalität
+- **Auto-Update**: Automatische Launcher-Updates
+- **Sichere Token-Speicherung**: OS Keychain Integration
+- **Settings Management**: Persistente Einstellungen
 
 ---
 
@@ -38,14 +24,18 @@ Ein professioneller Game Launcher für RemakeSoF, gebaut mit **React**, **TypeSc
 ### Frontend
 - **React 18** - UI Framework
 - **TypeScript** - Type Safety
+- **Vite** - Build Tool & Dev Server
 - **TailwindCSS** - Styling
 - **Zustand** - State Management
-- **Vite** - Build Tool
 
-### API Server (External)
-- **FastAPI** - Python Web Framework
-- **JWT** - Token Authentication
-- **Bcrypt** - Password Hashing
+### Desktop Backend (Tauri)
+- **Rust** - Native Backend
+- **Tauri 1.x** - Desktop Framework
+- **reqwest** - HTTP Client für API-Calls
+
+### Externe API (nicht in diesem Repo)
+- **FastAPI** - Python Backend auf `http://localhost:8000`
+- **JWT** - Token-basierte Authentifizierung
 
 ---
 
@@ -66,18 +56,6 @@ cd gamelauncher
 
 # Install frontend dependencies
 npm install
-
-# Backend API dependencies (optional - für lokalen Test-Server)
-### 3. Development
-
-#### Start FastAPI Backend (Terminal 1)
-```bash
-cd backend-api
-python main.py
-# oder
-Die Backend-API läuft auf einem externen Server (Standard: `http://localhost:8000`)
-
-```bash
 # Start Launcher (Dev Server)
 npm run tauri:dev
 # Build optimized launcher
@@ -241,8 +219,6 @@ npm run tauri:build
 - Stelle sicher, dass die Backend-API läuft
 - Überprüfe die Authentifizierung (Token)
 - Prüfe Backend-Logs auf FehleruthenticateWithToken(token);
-    }
-}
 
 string GetTokenFromCommandLineArgs()
 {
